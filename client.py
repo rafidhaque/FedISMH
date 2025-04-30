@@ -64,12 +64,14 @@ def test(model, test_data):
     return loss, accuracy
 
 if __name__ == "__main__":
-    # Example client setup (replace with actual data and model)
-    client_id = 0
+    # Example usage
     model = SimpleModel()
-    train_data = []  # Replace with actual training data
-    test_data = []  # Replace with actual test data
+    train_data = []  # Replace with actual DataLoader
+    test_data = []  # Replace with actual DataLoader
+    client = FlowerClient(model, "client_0", train_data, test_data)
 
-    # Start Flower client
-    client = FlowerClient(model, client_id, train_data, test_data)
-    fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=client)
+    # Use the updated start_client() method
+    fl.client.start_client(
+        server_address="127.0.0.1:8080",
+        client=client.to_client(),  # Convert the NumPyClient to the new client format
+    )
