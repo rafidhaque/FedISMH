@@ -1,0 +1,11 @@
+{
+    "num_rounds": 3,
+    "batch_size": 32,
+    "epochs_per_round": 1,
+    "num_clients": 10,
+    "iid": false,
+    "executor_config": {
+        "client_module": "client.py",
+        "client_class": "FedISMHClient"
+    }
+}

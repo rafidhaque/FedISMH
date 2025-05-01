@@ -1,31 +1,36 @@
 import flwr as fl
-import numpy as np
+from flwr.server import Server
+from flwr.common import EventType
 
-# Custom strategy to handle clustering and aggregation
-class ClusteredStrategy(fl.server.strategy.FedAvg):
-    def __init__(self, cluster_labels, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.cluster_labels = cluster_labels
-
+# Define a custom strategy for the Federated Server
+class CustomStrategy(fl.server.strategy.FedAvg):
     def configure_fit(self, rnd, parameters, client_manager):
-        # Group clients based on clusters
-        grouped_clients = {}
-        for client_id in client_manager.clients:
-            cluster = self.cluster_labels[client_id]
-            if cluster not in grouped_clients:
-                grouped_clients[cluster] = []
-            grouped_clients[cluster].append(client_id)
+        print(f"Configuring round {rnd}...")
+        return super().configure_fit(rnd, parameters, client_manager)
 
-        # Configure training for each cluster
-        config = {}
-        for cluster, clients in grouped_clients.items():
-            config[cluster] = {"clients": clients, "parameters": parameters}
-        return config
+    def aggregate_fit(self, rnd, results, failures):
+        print(f"Aggregating results for round {rnd}...")
+        return super().aggregate_fit(rnd, results, failures)
+
+def main() -> Server:
+    # Create strategy and server
+    strategy = CustomStrategy()
+    
+    # Create the server with the strategy
+    server = Server(strategy=strategy)
+    
+    # Add event handlers
+    def on_server_start(event):
+        print("Server started!")
+    
+    def on_round_start(event):
+        print(f"Round {event.round_number} started!")
+    
+    server.add_event_handler(EventType.SERVER_START, on_server_start)
+    server.add_event_handler(EventType.ROUND_START, on_round_start)
+    
+    return server
 
 if __name__ == "__main__":
-    # Example cluster labels (replace with actual clustering results)
-    cluster_labels = np.array([0, 0, 2, 0, 0, 0, 2, 3, 0, 4])
-
-    # Start the server with the clustered strategy
-    strategy = ClusteredStrategy(cluster_labels)
-    fl.server.start_server(strategy=strategy)
+    print("\nTo start the server, run this command in the terminal:")
+    print("flower-superlink --insecure --fleet-api-address=\"127.0.0.1:9092\" --serverappio-api-address=\"127.0.0.1:9093\"")

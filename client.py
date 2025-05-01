@@ -1,26 +1,22 @@
 import flwr as fl
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from torch.utils.data import DataLoader
+import argparse
 
-# Define a simple model
-class SimpleModel(nn.Module):
-    def __init__(self):
-        super(SimpleModel, self).__init__()
-        self.fc1 = nn.Linear(10, 10)
+# Import your models and data preparation functions
+from model import ModelFactory
+from dataset import load_datasets, prepare_datasets
 
-    def forward(self, x):
-        return self.fc1(x)
-
-# Define the Flower client
-class FlowerClient(fl.client.NumPyClient):
-    def __init__(self, model, client_id, train_data, test_data):
+class FedISMHClient(fl.client.NumPyClient):
+    def __init__(self, model, train_loader, test_loader, device):
         self.model = model
-        self.client_id = client_id
-        self.train_data = train_data
-        self.test_data = test_data
+        self.train_loader = train_loader
+        self.test_loader = test_loader
+        self.device = device
+        self.optimizer = torch.optim.Adam(model.parameters())
+        self.criterion = torch.nn.CrossEntropyLoss()
 
-    def get_parameters(self):
+    def get_parameters(self, config):
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
     def set_parameters(self, parameters):
@@ -30,48 +26,98 @@ class FlowerClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
-        train(self.model, self.train_data)
-        return self.get_parameters(), len(self.train_data), {}
+        self.model.train()
+        
+        for _ in range(config.get("epochs", 1)):
+            for data, target in self.train_loader:
+                data, target = data.to(self.device), target.to(self.device)
+                self.optimizer.zero_grad()
+                output = self.model(data)
+                loss = self.criterion(output, target)
+                loss.backward()
+                self.optimizer.step()
+
+        return self.get_parameters(config), len(self.train_loader.dataset), {}
 
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
-        loss, accuracy = test(self.model, self.test_data)
-        return float(loss), len(self.test_data), {"accuracy": float(accuracy)}
+        self.model.eval()
+        correct = total = 0
 
-# Define training and testing functions
-def train(model, train_data):
-    model.train()
-    optimizer = optim.SGD(model.parameters(), lr=0.01)
-    loss_fn = nn.CrossEntropyLoss()
-    for x, y in train_data:
-        optimizer.zero_grad()
-        loss = loss_fn(model(x), y)
-        loss.backward()
-        optimizer.step()
+        with torch.no_grad():
+            for data, target in self.test_loader:
+                data, target = data.to(self.device), target.to(self.device)
+                output = self.model(data)
+                pred = output.argmax(dim=1)
+                correct += pred.eq(target).sum().item()
+                total += target.size(0)
 
-def test(model, test_data):
-    model.eval()
-    loss_fn = nn.CrossEntropyLoss()
-    correct, total, loss = 0, 0, 0.0
-    with torch.no_grad():
-        for x, y in test_data:
-            outputs = model(x)
-            loss += loss_fn(outputs, y).item()
-            _, predicted = torch.max(outputs, 1)
-            total += y.size(0)
-            correct += (predicted == y).sum().item()
-    accuracy = correct / total
-    return loss, accuracy
+        accuracy = correct / total
+        return float(self.criterion(output, target)), total, {"accuracy": accuracy}
 
-if __name__ == "__main__":
-    # Example usage
-    model = SimpleModel()
-    train_data = []  # Replace with actual DataLoader
-    test_data = []  # Replace with actual DataLoader
-    client = FlowerClient(model, "client_0", train_data, test_data)
+# def main(client_id: int):
+#     # Set device
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+#     # Load and prepare datasets
+#     mnist_train, mnist_test, _, _ = load_datasets()
+#     datasets = prepare_datasets(mnist_train, iid=False)
+    
+#     # Create client's model
+#     factory = ModelFactory()
+#     model = factory.create_model(
+#         'simple' if client_id % 2 == 0 else 'resnet',
+#         in_channels=1,
+#         num_classes=10
+#     ).to(device)
+    
+#     # Create data loaders for this client
+#     train_loader = DataLoader(datasets['clients'][client_id], batch_size=32, shuffle=True)
+#     test_loader = DataLoader(datasets['test'], batch_size=32)
+    
+#     # Create client and convert to Flower client
+#     client = FedISMHClient(model, train_loader, test_loader, device)
+    
+#     # Start client using the new API
+#     fl.client.start_client(
+#         server_address="127.0.0.1:9092",
+#         client=client.to_client()
+#     )
 
-    # Use the updated start_client() method
-    fl.client.start_client(
-        server_address="127.0.0.1:8080",
-        client=client.to_client(),  # Convert the NumPyClient to the new client format
-    )
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(description="Start a Flower client")
+#     parser.add_argument("--client-id", type=int, required=True, help="Client ID (0-9)")
+#     args = parser.parse_args()
+    
+#     main(args.client_id)
+
+# ...existing code...
+
+def main(node_index: int = 0):
+    """Main function that creates and returns a client instance."""
+    # Set device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    
+    # Load and prepare datasets
+    mnist_train, mnist_test, _, _ = load_datasets()
+    datasets = prepare_datasets(mnist_train, iid=False)
+    
+    # Create client's model with node_index instead of client_id
+    factory = ModelFactory()
+    model = factory.create_model(
+        'simple' if node_index % 2 == 0 else 'resnet',
+        in_channels=1,
+        num_classes=10
+    ).to(device)
+    print(f"Created model for node {node_index}")
+    
+    # Create data loaders for this client
+    train_loader = DataLoader(datasets['clients'][node_index], batch_size=32, shuffle=True)
+    test_loader = DataLoader(datasets['test'], batch_size=32)
+    
+    # Create and return client instance
+    return FedISMHClient(model, train_loader, test_loader, device)
+
+# Export the main function for SuperLink/SuperNode
+client_fn = main
